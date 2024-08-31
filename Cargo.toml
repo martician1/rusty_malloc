@@ -1,0 +1,25 @@
+[package]
+name = "rusty_malloc"
+version = "0.1.0"
+edition = "2021"
+description = "A multithreaded yet simple memory allocator written in Rust."
+readme = "README.md"
+license-file = "LICENSE"
+authors = ["Martin Georgiev <martin04ge@gmail.com>"]
+repository = "https://github.com/martician1/rusty_malloc/tree/master"
+
+[profile.test]
+overflow-checks = true
+debug = true
+
+[dependencies]
+libc = "0.2"
+static_assertions = "1.1.0"
+tracing = "0.1"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.18", default-features = true, features = [
+  "env-filter",
+] }
+nu-ansi-term = "0.50"
+rand = "0.8.5"
