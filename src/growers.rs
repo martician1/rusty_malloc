@@ -118,6 +118,12 @@ pub mod arena_grower {
     }
 }
 
+unsafe impl<T: Grower + ?Sized> Grower for &mut T {
+    fn grow(&mut self, size: usize) -> Result<NonNull<u8>, ()> {
+        (*self).grow(size)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
