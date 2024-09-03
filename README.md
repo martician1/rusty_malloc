@@ -27,7 +27,7 @@ use rusty_malloc::RustyMalloc;
 use rusty_malloc::growers::BrkGrower;
 
 #[global_allocator]
-static ALLOCATOR: RustyMalloc<BrkGrower> = RustyMalloc::with_grower(BrkGrower::new());
+static ALLOCATOR: RustyMalloc<BrkGrower> = unsafe { RustyMalloc::with_grower(BrkGrower::new()) };
 
 fn main() {
     let v1: Vec<u32> = vec![1, 2, 3];
