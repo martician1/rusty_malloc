@@ -5,7 +5,7 @@
 
 [crates-url]: https://crates.io/crates/rusty_malloc
 [crates-badge]: https://img.shields.io/crates/v/rusty_malloc.svg
-[docs-url]: https://docs.rs/rusty_malloc/0.1.0/rusty_malloc
+[docs-url]: https://docs.rs/rusty_malloc/0.2.1/rusty_malloc
 [docs-badge]: https://docs.rs/rusty_malloc/badge.svg
 [mit-url]: LICENSE
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
