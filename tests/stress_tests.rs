@@ -8,7 +8,8 @@ use rusty_malloc::growers::BrkGrower;
 use rusty_malloc::RustyMalloc;
 
 #[global_allocator]
-static ALLOCATOR: RustyMalloc<BrkGrower> = unsafe { RustyMalloc::with_grower(BrkGrower::new()) };
+static ALLOCATOR: RustyMalloc<BrkGrower> =
+    unsafe { RustyMalloc::with_grower(BrkGrower::new(4096 * 64)) };
 
 #[test]
 fn stress_test_1() {

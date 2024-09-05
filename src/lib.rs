@@ -7,7 +7,7 @@
 //! To use this crate you can add `rusty_malloc` as a dependency in your project's `Cargo.toml`.
 //! ```toml
 //! [dependencies]
-//! rusty_malloc = "0.1"
+//! rusty_malloc = "0.2"
 //! ```
 //!
 //! ```
@@ -15,11 +15,11 @@
 //! use rusty_malloc::growers::BrkGrower;
 //!
 //! #[global_allocator]
-//! static ALLOCATOR: RustyMalloc<BrkGrower> = unsafe { RustyMalloc::with_grower(BrkGrower::new()) };
+//! static ALLOCATOR: RustyMalloc<BrkGrower> = unsafe { RustyMalloc::with_grower(BrkGrower::new(4096)) };
 //!
 //! fn main() {
 //!     let v1: Vec<u32> = vec![1, 2, 3];
-//!     println!("Brk is kinda cool {:?}", v1);
+//!     println!("Brk is cool {:?}", v1);
 //! }
 //! ```
 //!
@@ -41,7 +41,6 @@
 //! - Lastly, on deallocation the allocator transforms the to-be-freed block into a freelist
 //!   node and prepends it to the freelist.
 //!
-//! # Underlying concepts
 //! Bellow is a list of the abstractions used by the allocators for operating on the heap:
 //!
 //! ## Blocks
@@ -75,9 +74,35 @@
 //! by implementing the [`Grower`] trait for a `StackBuffer` struct
 //! and passing that struct as a parameter to [`RustyMalloc`] to manage it.
 //!
+//! # Takeaways
+//! As a project wrap-up I decided to bench the allocator to see whether it was
+//! at all comparable to the default [`System`] allocator that Rust uses.
+//! At first I got excited since the test results showed that my allocator did well and
+//! even slightly outperformed the default one, however the moment I distributed the test load
+//! to multiple CPUs performance started to significantly degrade.
+//!
+//! I did a bit of profiling and it turned out that for 16 threads over 60% of execution time was spent
+//! waiting to acquire a lock for [`RustyMalloc`]'s underlying [`RawMalloc`] allocator. Yikes!
+//! It then clicked with me how wrong it was for all threads to share the same heap region,
+//! of course there will be a huge amount of contention! It would be much smarter to let threads handle
+//! their own memory regions and never have to interfere.
+//! This however would be hard to achieve with the crate's current allocator design,
+//! since the whole notion of the heap being a contiguous growable buffer would have to be abandoned
+//! in favor of conceiving it as discrete chunks spread all across the address space.
+//! The reason why I initially didn't consider this more flexible design is that
+//! at the beginning I just wanted to write a `brk`-managed allocator,
+//! back then I did not see the value of using a scattered heap and just thought of it as
+//! unnecessary complication which would make the whole allocator more cumbersome to implement.
+//!
+//! In short, I did not consider scalability and it bit me hard!
+//! So, for all future allocator writers reading this, I hope you learn from my missteps.
+//! Use this as a guide to help you avoid the pitfalls I encountered and make your journey
+//! a bit easier when building your own allocators.
+//!
 //! [`RawMalloc`]: allocators::RawMalloc
 //! [`RustyMalloc`]: allocators::RustyMalloc
 //! [`Grower`]: growers::Grower
+//! [`System`]: std::alloc::System
 #![feature(allocator_api)]
 
 pub use crate::allocators::RawMalloc;

@@ -8,7 +8,7 @@
 // the allocator's "object requirements" -
 // To faciliate allocation the `RawMalloc` divides the heap into blocks,
 // all of which have [`HEADER_ALIGN`] alignment and content size that is a multiple of [`HEADER_SIZE`].
-// To comform to these requirements the allocator adjust parameters passed to alloc/realloc.
+// To comform to these requirements the allocator adjusts parameters passed to alloc/realloc.
 // The is called layout augmentation and is achieved via the
 // [`util::augment_layout`] and [`util::augment_size`] functions.
 //
@@ -42,20 +42,17 @@ pub(crate) const BLOCK_MIN_SIZE: usize = HEADER_SIZE + BLOCK_CONTENT_MIN_SIZE;
 const_assert!(BLOCK_CONTENT_MIN_ALIGN >= 2);
 const_assert!(NODE_ALIGN <= HEADER_ALIGN);
 
-///// TODO: The minimum number of bytes by which the heap grows.
-//const HEAP_MIN_INCREMENT: usize = 32 * BLOCK_MIN_SIZE;
-
 /// A single threaded memory allocator.
 #[repr(C)]
-pub struct RawMalloc<T: ?Sized + Grower> {
+pub struct RawMalloc<T: Grower> {
     freelist: UnsafeCell<Freelist>,
     grower: UnsafeCell<T>,
 }
 
 impl<T: Grower> Debug for RawMalloc<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("RawMalloc")
-            .field(&(self as *const Self))
+        f.debug_struct("RawMalloc")
+            .field("grower", &self.grower)
             .finish()
     }
 }
@@ -72,9 +69,11 @@ impl<T: Grower> RawMalloc<T> {
             grower: UnsafeCell::new(grower),
         }
     }
+}
 
+impl<T: Grower> RawMalloc<T> {
     #[instrument(level = "info", ret(level = Level::INFO), err(Debug, level = Level::ERROR))]
-    fn __alloc(&self, layout: Layout) -> Result<NonNull<u8>, ()> {
+    unsafe fn __alloc(&self, layout: Layout) -> Result<NonNull<u8>, ()> {
         let augmented_layout = augment_layout(layout)?;
         debug!(?augmented_layout, "Layout augmented.");
 
@@ -140,7 +139,7 @@ impl<T: Grower> RawMalloc<T> {
     /// # Safety
     /// This function is unsafe since it assumes that `block_start` is pointing to a valid occupied block
     /// and `new_obj_size` is properly augmented for an allocation (see the [`module`](self) level
-    /// documentation).
+    /// documentation). Additionally callers must ensure that no allocator fields are currently borrowed.
     #[instrument(level = "debug", ret(level = Level::DEBUG), err(Debug, level = Level::ERROR))]
     unsafe fn try_adjust(&self, block_start: *mut u8, new_obj_size: usize) -> Result<(), ()> {
         debug_assert!(self.heap_end().is_some());
@@ -161,8 +160,7 @@ impl<T: Grower> RawMalloc<T> {
             if block_end as *const u8 >= new_block_end {
                 // Shrink
                 debug_assert_eq!(obj_start as usize - block_start as usize, HEADER_SIZE);
-                let obj_start = self.place(block_start, obj_start, new_obj_size);
-                debug_assert_eq!(obj_start.sub(HEADER_SIZE).as_ptr(), block_start);
+                self.place_raw(block_start, block_end, obj_start, new_obj_size);
                 return Ok(());
             }
 
@@ -192,7 +190,7 @@ impl<T: Grower> RawMalloc<T> {
     }
 
     /// Grows the heap for an allocation of size `obj_size` and alignment `obj_align`.
-    /// Returns the old heap end and a pointer to where to put the allocation
+    /// Returns the old heap end, the growth ammount and a pointer to where to put the allocation
     /// or `Err(())` if the heap can not grow to accomodate the object.
     /// A space for a preceding header is always accounted for and if necessary a space for
     /// a padding free block is also considered.
@@ -200,12 +198,13 @@ impl<T: Grower> RawMalloc<T> {
     /// # Safety
     /// This function is unsafe since it assumes that `obj_align` and `obj_size`
     /// conform to the allocator object requirements (See the [`module`](self) level documentation).
+    /// Additionally callers must ensure that the allocator's grower is not currently borrowed.
     #[instrument(level = "debug", ret(level = Level::DEBUG), err(Debug, level=Level::ERROR))]
     unsafe fn grow(
         &self,
         obj_size: usize,
         obj_align: usize,
-    ) -> Result<(NonNull<u8>, NonNull<u8>), ()> {
+    ) -> Result<(NonNull<u8>, usize, NonNull<u8>), ()> {
         debug_assert_eq!(obj_size % HEADER_SIZE, 0);
 
         let old_heap_end: *mut u8;
@@ -243,15 +242,20 @@ impl<T: Grower> RawMalloc<T> {
         let growth_amount = obj_end as usize - old_heap_end as usize;
         debug!(growth_amount, "Calculated growth ammount.");
 
-        if let Err(()) = (*self.grower.get()).grow(growth_amount) {
-            error!("Growth failiure, no memory.");
-            return Err(());
+        match (*self.grower.get()).grow(growth_amount) {
+            Err(()) => {
+                error!("Growth failiure, no memory.");
+                Err(())
+            }
+            Ok((__old_heap_end, growth_amount)) => {
+                debug_assert_eq!(old_heap_end, __old_heap_end.as_ptr());
+                Ok((
+                    __old_heap_end,
+                    growth_amount,
+                    NonNull::new_unchecked(obj_start),
+                ))
+            }
         }
-
-        Ok((
-            NonNull::new_unchecked(old_heap_end),
-            NonNull::new_unchecked(obj_start),
-        ))
     }
 
     /// Grows the heap for an allocation of size `obj_size` and alignment `obj_align` and
@@ -262,25 +266,21 @@ impl<T: Grower> RawMalloc<T> {
     /// Safety:
     /// This function is unsafe since it assumes that `obj_align` and `obj_size`
     /// conform to the allocator object requirements (See the [`module`](self) level documentation).
+    /// Additionally callers must ensure that no allocator field is currently borrowed.
     #[instrument(level = "debug", ret(level = Level::DEBUG), err(Debug, level=Level::ERROR))]
     unsafe fn grow_and_place(&self, obj_size: usize, obj_align: usize) -> Result<NonNull<u8>, ()> {
-        let (old_heap_end, obj_start) = self
+        let (old_heap_end, growth_amount, obj_start) = self
             .grow(obj_size, obj_align)
-            .map(|p| (p.0.as_ptr(), p.1.as_ptr()))
+            .map(|p| (p.0.as_ptr(), p.1, p.2.as_ptr()))
             .inspect_err(|_| error!("Couldn't grow heap"))?;
 
         debug!(?obj_start, "Heap growth successful.");
-
-        let dist = obj_start as usize - old_heap_end as usize;
-
-        if dist != HEADER_SIZE {
-            debug_assert!(dist >= HEADER_SIZE + BLOCK_MIN_SIZE);
-            debug!("Placing intermediate block free block.");
-            self.create_new_block(old_heap_end.cast(), dist - 2 * HEADER_SIZE, true);
-        }
-
-        debug!("Placing block to accomodate object.");
-        self.create_new_block(obj_start.sub(HEADER_SIZE), obj_size, false);
+        self.place_raw(
+            old_heap_end,
+            old_heap_end.add(growth_amount),
+            obj_start,
+            obj_size,
+        );
         Ok(NonNull::new_unchecked(obj_start))
     }
 
@@ -292,7 +292,8 @@ impl<T: Grower> RawMalloc<T> {
     /// This function is unsafe since it assumes
     /// that `block_start` is pointing to the header of a valid *free* block,
     /// and that `obj_align` and `obj_size` conform to the allocator object requirements
-    /// (See the [`module`](self) level documentation).
+    /// (See the [`module`](self) level documentation). Additionally callers must ensure
+    /// that the allocator's freelist is not currently borrowed.
     #[instrument(level = "debug", ret(level = Level::DEBUG), err(Debug, level=Level::DEBUG))]
     unsafe fn try_place(
         &self,
@@ -329,11 +330,13 @@ impl<T: Grower> RawMalloc<T> {
 
         let block_freenode = block_start.add(HEADER_SIZE).cast();
         (*self.freelist.get()).remove(block_freenode);
-        let rez = self.place(block_start, obj_start, obj_size);
-        Ok(rez)
+        self.place_raw(block_start, block_end, obj_start, obj_size);
+        Ok(NonNull::new_unchecked(obj_start))
     }
 
-    /// Places the object in the block creating additional free blocks if padding is necessary.
+    /// Places an object with `obj_size` at `obj_start` creting a new block for it.
+    /// If necessary additional padding blocks are created so that the `[block_start, block_end]`
+    /// range gets populated with contiguous blocks.
     ///
     /// # Notes
     /// This function does not operate on the memory where the block contents are to be placed.
@@ -341,46 +344,38 @@ impl<T: Grower> RawMalloc<T> {
     /// with but with a smaller size.
     ///
     /// # Safety:
-    /// This function is unsafe since it relies on the assumption that the block is free and
-    /// suitable for placing an `obj-size`-sized object starting at `obj_start` -
-    /// that is the object should not only fit and be properly aligned in the block
-    /// but any left or right padding should also be sufficiently large to hold a
-    /// [`BLOCK_MIN_SIZE`]-sized block.
-    #[instrument(level = "debug", ret(level = Level::DEBUG))]
-    unsafe fn place(
+    /// This function is unsafe since it relies on the assumption that the `[block_start, block_end]` range
+    /// does not contain any data that's in currently in use and that it's with proper size and
+    /// alignment for populating it with blocks. It's also assumed that the object parameters are valid -
+    /// that is the object should not only fit and be properly aligned in the region
+    /// but any left padding should also be sufficiently large to hold a
+    /// [`BLOCK_MIN_SIZE`]-sized block. Lastly callers should ensure
+    /// that the allocator's freelist is not currently borrowed.
+    #[instrument(level = "debug")]
+    unsafe fn place_raw(
         &self,
         mut block_start: *mut u8,
+        block_end: *mut u8,
         obj_start: *mut u8,
         mut obj_size: usize,
-    ) -> NonNull<u8> {
-        let block_header: *const Header = block_start.cast();
-        let block_content_size = (*block_header).content_size();
-
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(obj_size as isize > 0);
-            let block_size = block_content_size
-                .checked_add(HEADER_SIZE)
-                .expect("Block size should not exceed usize::MAX");
-            debug_assert!(
-                block_start as usize <= usize::MAX - block_size,
-                "Block end shouldn't be outside of the address space."
-            );
-            debug_assert!(
-                obj_start as usize <= usize::MAX - obj_size,
-                "Object end shouldn't be outside of the address space."
-            );
-        }
-
-        debug!(
-            ?block_start,
-            block_header = ?*block_header,
-            ?obj_start,
-            "Placing object."
+    ) {
+        debug_assert!(obj_size as isize > 0);
+        debug_assert!(block_end as usize >= block_start as usize);
+        debug_assert!(
+            block_end as usize - block_start as usize >= BLOCK_MIN_SIZE,
+            "{:?} {:?}",
+            block_start,
+            block_end
+        );
+        debug_assert!(block_start <= obj_start);
+        debug_assert!(
+            obj_start as usize <= usize::MAX - obj_size,
+            "Object end shouldn't be outside of the address space."
         );
 
-        let block_end = block_start.add(HEADER_SIZE + block_content_size);
         let mut obj_end = obj_start.add(obj_size);
+
+        debug_assert!(block_end >= obj_end);
 
         let dist = obj_start as usize - block_start as usize;
 
@@ -419,7 +414,6 @@ impl<T: Grower> RawMalloc<T> {
 
         debug!("Placing block to accomodate object.");
         self.create_new_block(block_start, obj_size, false);
-        NonNull::new_unchecked(obj_start)
     }
 
     /// Frees the block pointed to by `block_start`, currently this is equivalent to
@@ -428,7 +422,8 @@ impl<T: Grower> RawMalloc<T> {
     /// # Safety
     /// This function is unsafe since it assumes that `block_start` points to a block
     /// that is indeed to be freed, i.e. the block shouldn't be free already and should be treated
-    /// as free after this function returns.
+    /// as free after this function returns. Additionally callers must ensure the allocator's freelist isn't
+    /// currently borrowed.
     #[instrument(level = "debug")]
     unsafe fn free_block(&self, block_start: *mut u8) {
         let block_header: *mut Header = block_start.cast();
@@ -447,6 +442,8 @@ impl<T: Grower> RawMalloc<T> {
     /// # Safety
     /// This function is unsafe since it assumes that the block parameters
     /// are valid and the block doesn't overwrite any block that is currently in use.
+    /// Additionally if `is_free` is true callers must ensure the allocator's freelist isn't
+    /// currently borrowed.
     #[instrument(level = "debug")]
     unsafe fn create_new_block(&self, block_start: *mut u8, content_size: usize, is_free: bool) {
         let block_header: *mut Header = block_start.cast();
@@ -460,7 +457,8 @@ impl<T: Grower> RawMalloc<T> {
     /// Merges subsequent (in memory) freelist nodes starting from `node` into a single node.
     ///
     /// # Safety
-    /// This function is unsafe since it assumes that `node` is a part of a valid free block.
+    /// This function is unsafe since it assumes that `node` is a part of a valid free block
+    /// and that no allocator field is currently borrowed.
     #[instrument(level = "debug")]
     unsafe fn merge_subsequent_nodes(&self, node: *mut Node) {
         let block_header = &mut *(node.cast::<Header>().sub(1));
@@ -516,7 +514,8 @@ impl<T: Grower> RawMalloc<T> {
     /// if there was no suitable block for the object.
     ///
     /// # Safety
-    /// This function is unsafe since it assumes that the object layout is augmented.
+    /// This function is unsafe since it assumes that the object layout is augmented
+    /// and that no allocator field is currently borrowed.
     #[instrument(level = "debug", ret(level = Level::DEBUG), err(Debug, level = Level::DEBUG))]
     unsafe fn place_in_first_free_block(
         &self,
@@ -556,7 +555,7 @@ impl<T: Grower> RawMalloc<T> {
     #[inline(always)]
     unsafe fn heap_end(&self) -> Option<NonNull<u8>> {
         match (*self.grower.get()).grow(0) {
-            Ok(end) => Some(end),
+            Ok((end, _)) => Some(end),
             Err(()) => None,
         }
     }
@@ -566,10 +565,12 @@ impl<T: Grower> RawMalloc<T> {
 
 unsafe impl<T: Grower> Allocator for RawMalloc<T> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let Ok(obj_start) = self.__alloc(layout) else {
-            return Err(AllocError);
-        };
-        unsafe { Ok(to_nonnull_slice(obj_start)) }
+        unsafe {
+            let Ok(obj_start) = self.__alloc(layout) else {
+                return Err(AllocError);
+            };
+            Ok(to_nonnull_slice(obj_start))
+        }
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
@@ -643,6 +644,14 @@ unsafe impl<T: Grower> GlobalAlloc for RawMalloc<T> {
         raw_ptr(self.__realloc(ptr, layout, new_size).ok())
     }
 }
+
+impl<T: Grower> PartialEq for RawMalloc<T> {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self, other)
+    }
+}
+
+impl<T: Grower> Eq for RawMalloc<T> {}
 
 #[cfg(test)]
 mod tests;

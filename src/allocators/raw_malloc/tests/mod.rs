@@ -27,7 +27,7 @@ fn test_1() {
 
     const BUF_SIZE: usize = 64 * 1024;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let mut objects: Vec<(*mut u8, Layout)> = vec![];
@@ -62,7 +62,7 @@ fn test_1() {
 fn test_2() {
     const BUF_SIZE: usize = 32 * BLOCK_MIN_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout_1 = Layout::from_size_align(BLOCK_CONTENT_MIN_SIZE, 1).unwrap();
@@ -87,7 +87,7 @@ fn test_2() {
 fn test_3() {
     const BUF_SIZE: usize = 32 * BLOCK_MIN_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout_1 = Layout::from_size_align(BLOCK_CONTENT_MIN_SIZE, 1).unwrap();
@@ -112,7 +112,7 @@ fn test_3() {
 fn test_4() {
     const BUF_SIZE: usize = 32 * BLOCK_MIN_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout_1 = Layout::from_size_align(BLOCK_CONTENT_MIN_SIZE, 1).unwrap();
@@ -137,7 +137,7 @@ fn test_4() {
 fn test_5() {
     const BUF_SIZE: usize = 8 * BLOCK_MIN_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout = Layout::from_size_align(BUF_SIZE - HEADER_SIZE, 1).unwrap();
@@ -155,7 +155,7 @@ fn test_5() {
 fn test_6() {
     const BUF_SIZE: usize = 128 * HEADER_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout_1 = Layout::from_size_align(HEADER_SIZE * 4, HEADER_ALIGN).unwrap();
@@ -187,7 +187,7 @@ fn test_6() {
 fn test_7() {
     const BUF_SIZE: usize = 64 * HEADER_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout = Layout::from_size_align(HEADER_SIZE * 10, HEADER_ALIGN).unwrap();
@@ -206,7 +206,7 @@ fn test_7() {
 fn test_8() {
     const BUF_SIZE: usize = 1024 * HEADER_SIZE;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout = Layout::from_size_align(HEADER_SIZE * 32, HEADER_SIZE * 32).unwrap();
@@ -227,7 +227,7 @@ fn test_8() {
 fn test_9() {
     const BUF_SIZE: usize = BLOCK_MIN_SIZE * 32;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout = Layout::from_size_align(HEADER_SIZE * 8, HEADER_ALIGN).unwrap();
@@ -245,7 +245,7 @@ fn test_9() {
 fn test_10() {
     const BUF_SIZE: usize = BLOCK_MIN_SIZE * 8;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let p1 = allocator
@@ -263,7 +263,7 @@ fn test_10() {
 fn test_11() {
     const BUF_SIZE: usize = BLOCK_MIN_SIZE * 8;
     let mut buf = [0_u8; BUF_SIZE];
-    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE);
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, 0);
     let allocator = unsafe { RawMalloc::with_grower(grower) };
 
     let layout_1 = Layout::from_size_align(20, 4).unwrap();
@@ -281,4 +281,20 @@ fn test_11() {
             .as_ptr() as *mut u8
     };
     assert_eq!(p1, p3);
+}
+
+#[test]
+fn test_12() {
+    const BUF_SIZE: usize = BLOCK_MIN_SIZE * 32;
+    let mut buf = [0_u8; BUF_SIZE];
+    let grower = ArenaGrower::new((&mut buf) as *mut _, BUF_SIZE, BUF_SIZE);
+    let allocator = unsafe { RawMalloc::with_grower(grower) };
+
+    let layout = Layout::from_size_align(BLOCK_CONTENT_MIN_SIZE, 1).unwrap();
+    unsafe {
+        let p1 = allocator.alloc(layout);
+        assert!(!p1.is_null());
+        let p2 = allocator.realloc(p1, layout, BLOCK_CONTENT_MIN_SIZE * 4,);
+        assert_eq!(p1, p2);
+    }
 }

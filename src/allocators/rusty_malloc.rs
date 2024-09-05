@@ -10,8 +10,9 @@ use std::sync::Mutex;
 /// A multithreaded memory allocator.
 ///
 /// This allocator is just a `Mutex` wrapper over [`RawMalloc`] to allow for multithreading.
+#[derive(Debug)]
 #[repr(C)]
-pub struct RustyMalloc<T: ?Sized + Grower> {
+pub struct RustyMalloc<T: Grower> {
     inner: Mutex<RawMalloc<T>>,
 }
 
@@ -25,6 +26,16 @@ impl<T: Grower> RustyMalloc<T> {
         }
     }
 }
+
+impl<T: Grower> PartialEq for RustyMalloc<T> {
+    fn eq(&self, other: &Self) -> bool {
+        // Different instances shouldn't be equal since they operate on different growers.
+        core::ptr::eq(self, other)
+    }
+}
+
+impl<T: Grower> Eq for RustyMalloc<T> {}
+
 
 unsafe impl<T: Grower> Sync for RustyMalloc<T> {}
 
